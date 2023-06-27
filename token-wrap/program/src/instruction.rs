@@ -1,5 +1,11 @@
 //! Program instructions
-
+use spl_token::instruction::mint_to;
+use solana_program::example_mocks::solana_sdk::transaction::Transaction;
+use solana_program::example_mocks::solana_sdk::signature::Keypair;
+use solana_program::*;
+use solana_program::example_mocks::solana_sdk::signature::Signer;
+use spl_token::state::Account;
+   
 use {
     num_enum::{IntoPrimitive, TryFromPrimitive},
     solana_program::{
@@ -81,4 +87,205 @@ pub enum TokenWrapInstruction {
     ///   * little-endian u64 representing the amount to unwrap
     ///
     Unwrap,
+}
+
+/// Create a `CreateMint` instruction. See `TokenWrapInstruction::CreateMint`
+
+pub fn create_mint(
+    program_id: &Pubkey,
+    funding_account: &Pubkey,
+    wrapped_mint: &Pubkey,
+    wrapped_backpointer: &Pubkey,
+    unwrapped_mint: &Pubkey,
+    idempotent: bool,
+) -> Instruction {
+    let mut accounts = vec![
+        AccountMeta::new(*funding_account, true),
+        AccountMeta::new(*wrapped_mint, false),
+        AccountMeta::new(*wrapped_backpointer, false),
+        AccountMeta::new_readonly(*unwrapped_mint, false),
+        AccountMeta::new_readonly(spl_token::id(), false),
+    ];
+    if idempotent {
+        accounts.push(AccountMeta::new_readonly(spl_token_2022::id(), false));
+    }
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: vec![idempotent as u8],
+    }
+}
+// Derive the wrapped mint address from the unwrapped mint address and the
+pub fn wrap(
+    program_id: &Pubkey,
+    unwrapped_token: &Pubkey,
+    unwrapped_mint: &Pubkey,
+    wrapped_mint: &Pubkey,
+    wrapped_token: &Pubkey,
+    amount: u64,
+    multisig_signers: Option<Vec<Pubkey>>,
+) -> Instruction {
+    let mut accounts = vec![
+        AccountMeta::new(*unwrapped_token, false),
+        AccountMeta::new(*wrapped_token, false),
+        AccountMeta::new_readonly(*unwrapped_mint, false),
+        AccountMeta::new_readonly(*wrapped_mint, false),
+        AccountMeta::new_readonly(spl_token::id(), false),
+        AccountMeta::new_readonly(spl_token_2022::id(), false),
+    ];
+    if let Some(signers) = multisig_signers {
+        for signer in signers {
+            accounts.push(AccountMeta::new_readonly(signer, true));
+        }
+    }
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: amount.to_le_bytes().to_vec(),
+    }
+}
+
+pub fn unwrap(
+    program_id: &Pubkey,
+    wrapped_token: &Pubkey,
+    wrapped_mint: &Pubkey,
+    unwrapped_token: &Pubkey,
+    unwrapped_mint: &Pubkey,
+    amount: u64,
+    multisig_signers: Option<Vec<Pubkey>>,
+) -> Instruction {
+    let mut accounts = vec![
+        AccountMeta::new(*wrapped_token, false),
+        AccountMeta::new(*unwrapped_token, false),
+        AccountMeta::new_readonly(*wrapped_mint, false),
+        AccountMeta::new_readonly(*unwrapped_mint, false),
+        AccountMeta::new_readonly(spl_token::id(), false),
+        AccountMeta::new_readonly(spl_token_2022::id(), false),
+    ];
+    if let Some(signers) = multisig_signers {
+        for signer in signers {
+            accounts.push(AccountMeta::new_readonly(signer, true));
+        }
+    }
+    Instruction {
+        program_id: *program_id,
+        accounts,
+        data: amount.to_le_bytes().to_vec(),
+    }
+}
+
+#[cfg(test)]
+
+pub mod tests {
+    use super::*;
+    use crate::{
+        instruction::{TokenWrapInstruction},
+    };
+    use solana_program::{
+        instruction::{AccountMeta, Instruction},
+        program_error::ProgramError,
+        program_pack::Pack,
+        pubkey::Pubkey,
+        system_instruction,
+    };
+    use spl_token::state::{Account, Mint};
+
+    #[test]
+    fn test_create_mint() {
+        let program_id = Pubkey::new_unique();
+        let funding_account = Pubkey::new_unique();
+        let wrapped_mint = Pubkey::new_unique();
+        let wrapped_backpointer = Pubkey::new_unique();
+        let unwrapped_mint = Pubkey::new_unique();
+
+        let mut accounts = vec![
+            AccountMeta::new(funding_account, true),
+            AccountMeta::new(wrapped_mint, false),
+            AccountMeta::new(wrapped_backpointer, false),
+            AccountMeta::new_readonly(unwrapped_mint, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+        ];
+        let instruction = Instruction {
+            program_id,
+            accounts,
+            data: vec![0],
+        };
+        
+
+        let instruction = create_mint(
+            &program_id,
+            &funding_account,
+            &wrapped_mint,
+            &wrapped_backpointer,
+            &unwrapped_mint,
+            false,
+        );
+    }
+
+    #[test]
+    fn test_wrap() {
+        let program_id = Pubkey::new_unique();
+        let unwrapped_token = Pubkey::new_unique();
+        let unwrapped_mint = Pubkey::new_unique();
+        let wrapped_mint = Pubkey::new_unique();
+        let wrapped_token = Pubkey::new_unique();
+        let amount: u64 = 100;
+        let multisig_signers = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+
+        let mut accounts = vec![
+            AccountMeta::new(unwrapped_token, false),
+            AccountMeta::new(wrapped_token, false),
+            AccountMeta::new_readonly(unwrapped_mint, false),
+            AccountMeta::new_readonly(wrapped_mint, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+        ];
+        for signer in multisig_signers.clone() {
+            accounts.push(AccountMeta::new_readonly(signer, true));
+        }
+        
+
+        let instruction = wrap(
+            &program_id,
+            &unwrapped_token,
+            &unwrapped_mint,
+            &wrapped_mint,
+            &wrapped_token,
+            amount,
+            Some(multisig_signers),
+        );
+    }
+    #[test]
+    fn test_unwrap() {
+        let program_id = Pubkey::new_unique();
+        let wrapped_token = Pubkey::new_unique();
+        let wrapped_mint = Pubkey::new_unique();
+        let unwrapped_token = Pubkey::new_unique();
+        let unwrapped_mint = Pubkey::new_unique();
+        let amount: u64 = 100;
+        let multisig_signers = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+
+        let mut accounts = vec![
+            AccountMeta::new(wrapped_token, false),
+            AccountMeta::new(unwrapped_token, false),
+            AccountMeta::new_readonly(wrapped_mint, false),
+            AccountMeta::new_readonly(unwrapped_mint, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+            AccountMeta::new_readonly(spl_token_2022::id(), false),
+        ];
+        for signer in multisig_signers.clone() {
+            accounts.push(AccountMeta::new_readonly(signer, true));
+        }
+        
+
+        let instruction = unwrap(
+            &program_id,
+            &wrapped_token,
+            &wrapped_mint,
+            &unwrapped_token,
+            &unwrapped_mint,
+            amount,
+            Some(multisig_signers),
+        );
+    }
 }
